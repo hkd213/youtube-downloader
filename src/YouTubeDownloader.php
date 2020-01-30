@@ -113,8 +113,20 @@ class YouTubeDownloader
         $parser = new Parser();
 
         try {
-            $formats = $player_response['streamingData']['formats'];
-            $adaptiveFormats = $player_response['streamingData']['adaptiveFormats'];
+            $hlsManifestUrl = isset($player_response['streamingData']['hlsManifestUrl']) ? $player_response['streamingData']['hlsManifestUrl'] : null;
+
+            if ($hlsManifestUrl) {
+                return [
+                    [
+                        'url' => $hlsManifestUrl,
+                        'itag' => 0,
+                        'format' => $parser->parseItagInfo(0)
+                    ]
+                ];
+            }
+
+            $formats = isset($player_response['streamingData']['formats']) ? $player_response['streamingData']['formats'] : [];
+            $adaptiveFormats = isset($player_response['streamingData']['adaptiveFormats']) ? $player_response['streamingData']['adaptiveFormats'] : [];
 
             if (!is_array($formats)) {
                 $formats = array();
@@ -148,7 +160,7 @@ class YouTubeDownloader
                 parse_str($cipher, $result);
 
                 $url = $result['url'];
-                $sp = $result['sp']; // typically 'sig'
+                $sp = $result['sp'] ?? $result['sig']; // typically 'sig'
                 $signature = $result['s'];
 
                 $decoded_signature = (new SignatureDecoder())->decode($signature, $js_code);
@@ -173,11 +185,10 @@ class YouTubeDownloader
         return null;
     }
 
-    public function getDownloadLinks($video_id, $pageHtml, $selector = false)
+    public function getDownloadLinks($video_id, $pageHtml, $scriptData, $selector = false)
     {
         $this->error = null;
 
-        // $page_html = $this->getPageHtml($video_id);
         $page_html = $pageHtml;
 
         if (strpos($page_html, 'We have been receiving a large volume of requests') !== false ||
@@ -192,8 +203,7 @@ class YouTubeDownloader
         $json = $this->getPlayerResponse($page_html);
 
         // get player.js location that holds signature function
-        $url = $this->getPlayerUrl($page_html);
-        $js = $this->getPlayerCode($url);
+        $js = $scriptData;
 
         $result = $this->parsePlayerResponse($json, $js);
 
