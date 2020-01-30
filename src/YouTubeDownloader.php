@@ -173,11 +173,12 @@ class YouTubeDownloader
         return null;
     }
 
-    public function getDownloadLinks($video_id, $selector = false)
+    public function getDownloadLinks($video_id, $pageHtml, $selector = false)
     {
         $this->error = null;
 
-        $page_html = $this->getPageHtml($video_id);
+        // $page_html = $this->getPageHtml($video_id);
+        $page_html = $pageHtml;
 
         if (strpos($page_html, 'We have been receiving a large volume of requests') !== false ||
             strpos($page_html, 'systems have detected unusual traffic') !== false) {
