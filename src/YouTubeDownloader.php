@@ -8,7 +8,7 @@ class YouTubeDownloader
 {
     protected $client;
 
-    /** @var string */
+    /** @var string|null */
     protected $error;
 
     function __construct()
@@ -26,9 +26,14 @@ class YouTubeDownloader
         return $this->error;
     }
 
-    // accepts either raw HTML or url
-    // <script src="//s.ytimg.com/yts/jsbin/player-fr_FR-vflHVjlC5/base.js" name="player/base"></script>
-    public function getPlayerUrl($video_html)
+    /**
+     * Look for a player script URL. E.g:
+     * <script src="//s.ytimg.com/yts/jsbin/player-fr_FR-vflHVjlC5/base.js" name="player/base"></script>
+     *
+     * @param $video_html
+     * @return null|string
+     */
+    public function getPlayerScriptUrl($video_html)
     {
         $player_url = null;
 
@@ -88,9 +93,40 @@ class YouTubeDownloader
         return $result;
     }
 
-    public function getVideoInfo($url)
+    // https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=JnfyjwChuNU&format=json
+    public function getVideoInfo($video_id)
     {
-        // $this->client->get("https://www.youtube.com/get_video_info?el=embedded&eurl=https%3A%2F%2Fwww.youtube.com%2Fwatch%3Fv%3D" . urlencode($video_id) . "&video_id={$video_id}");
+        $response = $this->client->get("https://www.youtube.com/get_video_info?" . http_build_query([
+                'video_id' => $video_id,
+                'eurl' => 'https://youtube.googleapis.com/v/' . $video_id,
+                'el' => 'embedded' // or detailpage. default: embedded, will fail if video is not embeddable
+            ]));
+
+        if ($response) {
+            $arr = array();
+
+            parse_str($response, $arr);
+
+            if (array_key_exists('player_response', $arr)) {
+                $arr['player_response'] = json_decode($arr['player_response'], true);
+            }
+
+            return $arr;
+        }
+
+        return null;
+    }
+
+    public function getPlayerConfig($video_id)
+    {
+        $video_id = $this->extractVideoId($video_id);
+        $response = $this->client->get("https://www.youtube.com/watch?v={$video_id}");
+
+        if (preg_match('/ytplayer.config\s*=\s*([^\n]+});ytplayer/i', $response, $matches)) {
+            return json_decode($matches[1], true);
+        }
+
+        return [];
     }
 
     public function getPageHtml($url)
@@ -116,7 +152,7 @@ class YouTubeDownloader
         $parser = new Parser();
 
         try {
-            $hlsManifestUrl = isset($player_response['streamingData']['hlsManifestUrl']) ? $player_response['streamingData']['hlsManifestUrl'] : null;
+            $hlsManifestUrl = Utils::arrayGet($player_response, 'streamingData.hlsManifestUrl', null);
 
             if ($hlsManifestUrl) {
                 return [
@@ -128,16 +164,10 @@ class YouTubeDownloader
                 ];
             }
 
-            $formats = isset($player_response['streamingData']['formats']) ? $player_response['streamingData']['formats'] : [];
-            $adaptiveFormats = isset($player_response['streamingData']['adaptiveFormats']) ? $player_response['streamingData']['adaptiveFormats'] : [];
+            $formats = Utils::arrayGet($player_response, 'streamingData.formats', []);
 
-            if (!is_array($formats)) {
-                $formats = array();
-            }
-
-            if (!is_array($adaptiveFormats)) {
-                $adaptiveFormats = array();
-            }
+            // video only or audio only streams
+            $adaptiveFormats = Utils::arrayGet($player_response, 'streamingData.adaptiveFormats', []);
 
             $formats_combined = array_merge($formats, $adaptiveFormats);
 
@@ -145,10 +175,9 @@ class YouTubeDownloader
             $return = array();
 
             foreach ($formats_combined as $item) {
-            	$cipher = '';
-                if(isset($item['cipher']) || isset($item['signatureCipher'])) {
-					$cipher = isset($item['cipher']) ? $item['cipher'] : $item['signatureCipher'];
-				}
+
+                // sometimes as appear as "cipher" or "signatureCipher"
+                $cipher = Utils::arrayGet($item, 'cipher', Utils::arrayGet($item, 'signatureCipher', ''));
                 $itag = $item['itag'];
 
                 // some videos do not need to be decrypted!
@@ -197,7 +226,8 @@ class YouTubeDownloader
         $page_html = $pageHtml;
 
         if (strpos($page_html, 'We have been receiving a large volume of requests') !== false ||
-            strpos($page_html, 'systems have detected unusual traffic') !== false) {
+            strpos($page_html, 'systems have detected unusual traffic') !== false ||
+            strpos($page_html, '/recaptcha/') !== false) {
 
             $this->error = 'HTTP 429: Too many requests.';
 
